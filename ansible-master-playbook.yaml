@@ -1,0 +1,480 @@
+---
+- hosts: all
+  become: true
+  vars:
+    var_node: /home/vagrant
+    unzip_version: "6.0*"
+
+
+### --- JAVA
+
+
+  tasks:
+  - name: Install Java 
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - openjdk-8-jdk
+
+  - name: Set JAVA_HOME env
+    shell: echo "JAVA_HOME=/usr" | sudo tee -a /etc/environment
+      
+### --- NODEJS
+
+  - name: Node.js - Get script
+    get_url:
+      url: "http://deb.nodesource.com/setup_14.x"
+      dest: "{{ var_node }}/nodejs.sh"
+  
+  - name: Node.js - Set execution permission to script
+    file:
+      path: "{{ var_node }}/nodejs.sh"
+      mode: "u+x"
+  
+  - name: Node.js - Execute installation script
+    shell: "{{ var_node }}/nodejs.sh"
+  
+  - name: Node.js - Remove installation script
+    file:
+      path: "{{ var_node}}/nodejs.sh"
+      state: absent
+  
+  - name: Install build-essential
+    apt: name=build-essential state=present 
+
+  - name: Node.js - Install Node.js
+    apt: name=nodejs state=present update_cache=yes
+
+
+### --- DOCKER
+
+  - name: Install packages that allow apt to be used over HTTPS
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg-agent
+      - software-properties-common
+
+  - name: Add an apt signing key for Docker
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Verify that we have the key with the fingerprint
+    remote_user: ubuntu
+    apt_key:
+      id: 0EBFCD88
+      state: present
+
+  - name: Add apt repository for stable version
+    apt_repository:
+      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu xenial stable
+      state: present
+      update_cache: yes
+
+  - name: Install docker and its dependecies
+    apt: 
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - docker-ce 
+      - docker-ce-cli 
+      - containerd.io
+    notify:
+      - docker status
+
+  - name: Add vagrant user to docker group
+    user:
+      name: vagrant
+      group: docker
+
+  - name: Install docker-compose
+    remote_user: ubuntu
+    get_url: 
+      url: https://github.com/docker/compose/releases/download/1.26.0/docker-compose-Linux-x86_64
+###      url: curl -L https://github.com/docker/compose/releases/download/1.18.0/docker-compose-Linux-x86_64
+###      url : https://github.com/docker/compose/releases/download/1.25.1-rc1/docker-compose-Linux-x86_64
+      dest: /usr/local/bin/docker-compose
+      mode: 'u+x,g+x'
+
+  - name: Create a symbolic link to /usr/bin
+    command: ln -s /usr/local/bin/docker-compose /usr/bin/docker-compose
+
+
+  handlers:
+    - name: docker status
+      service: name=docker state=started
+
+
+### --- JENKINS
+
+  - name: Add an apt signing key for Jenkins
+    apt_key:
+      url: https://pkg.jenkins.io/debian/jenkins-ci.org.key
+      state: present
+
+  - name: Add apt repository for jenkins stable version
+    apt_repository:
+      repo: 'deb [arch=amd64] http://pkg.jenkins.io/debian-stable binary/'
+      update_cache: yes
+      state: present
+
+
+  - name: Install Jenkins
+    apt:
+      name: jenkins
+      state: present
+      update_cache: yes  
+
+
+  - name: Start Jenkins Service
+    service:
+      name: jenkins
+      state: started
+
+
+
+### --- GITLAB
+
+  - name: Install dependencies ca-certs, openssh, postfix
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - openssh-server
+      - openssl
+      - postfix
+      - gnupg2
+
+
+  - name: Download gitlab-ce
+    get_url:
+      url: "https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh"
+      dest: /tmp/gitlab_install_repository.sh
+
+
+  - name: Install GitLab repository.
+    command: bash /tmp/gitlab_install_repository.sh
+
+
+  - name: Install gitlab-ce
+    apt:
+      name: gitlab-ce
+      state: present
+      update_cache: yes
+
+
+### --- MYSQL
+
+  - name: Install MySQL
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - mysql-server
+
+  - name: Start Mysql Service
+    service: name=mysql state=started enabled=yes
+  
+#  - name: Create a new database with name 'bobdata'
+#    mysql_db:
+#      name: mysqldb
+#      state: present
+#  
+#  - name: Create Application DB User
+#    mysql_user: name=mysqldb_user password=mysqldb_pwd priv=*.*:ALL host='%' state=present
+  
+
+### --- GRAILS
+
+
+  - name: Install unzip
+    apt: pkg=unzip state=present
+
+  - name: Install zip
+    apt: pkg=zip state=present
+
+# Install SDKMAN
+  - name: Install SDKMAN!
+    become: true
+    become_user: vagrant
+#    when: is_sdkman_installed.stdout == "no"
+    shell: curl -s http://get.sdkman.io | bash executable=/bin/bash
+  
+# Ensure presence of .bashrc
+  - name: Ensure presence of bashrc
+    become: true
+    become_user: vagrant
+    file: state=touch path={{ var_node }}/.bashrc
+   
+# Add sdkman in .bashrc
+  - name: Add sdkman in .bashrc
+    become: true
+    become_user: vagrant
+    lineinfile: dest={{ var_node }}/.bashrc regexp="\/.sdkman/bin\/sdkman\-init\.sh" line='[[ -s "{{ var_node }}/.sdkman/bin/sdkman-init.sh" && ! $(which sdkman-init.sh) ]] && source "{{ var_node }}/.sdkman/bin/sdkman-init.sh"'
+  
+# Check for SDKMAN installation
+  - name: Check for SDKMAN installation
+    stat:
+      path: '{{ var_node }}/.sdkman/bin/sdkman-init.sh'
+
+# Install grails
+  - name: Installing grails
+    # This will read your bash profile file, which would setup sdkman-init.sh.
+    become: true
+    become_user: vagrant
+    shell: . {{ var_node }}/.sdkman/bin/sdkman-init.sh; sdk install grails
+    args:
+      executable: /bin/bash
+
+#    command: /bin/bash source {{ var_node }}/.sdkman/bin/sdkman-init.sh; sdk install grails
+
+
+### --- KUBERNETES - MASTER NODE
+
+  - name: Install packages that allow apt to be used over HTTPS
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg-agent
+      - software-properties-common
+
+  - name: Add an apt signing key for Docker
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Add apt repository for stable version
+    apt_repository:
+      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu xenial stable
+      state: present
+
+  - name: Install docker and its dependecies
+    apt: 
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - docker-ce 
+      - docker-ce-cli 
+      - containerd.io
+    notify:
+      - docker status
+
+  - name: Add vagrant user to docker group
+    user:
+      name: vagrant
+      group: docker
+
+  - name: Add an apt signing key for Kubernetes
+    apt_key:
+      url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+      state: present
+
+  - name: Adding apt repository for Kubernetes
+    apt_repository:
+      repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+      state: present
+      filename: kubernetes.list
+
+  - name: Install Kubernetes binaries
+    apt: 
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+        - kubelet 
+        - kubeadm 
+        - kubectl
+
+#  - name: Configure node ip
+#    lineinfile:
+#      path: /etc/default/kubelet
+#      line: KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}
+
+  - name: Restart kubelet
+    service:
+      name: kubelet
+      daemon_reload: yes
+      state: restarted
+
+  - name: Initialize the Kubernetes cluster using kubeadm
+    command: kubeadm init --apiserver-advertise-address="192.168.1.15" --apiserver-cert-extra-sans="192.168.1.15"  --node-name k8s-master --pod-network-cidr=192.168.1.0/24
+
+  - name: Setup kubeconfig for vagrant user
+    command: "{{ item }}"
+    with_items:
+     - mkdir -p /home/vagrant/.kube
+     - cp -i /etc/kubernetes/admin.conf /home/vagrant/.kube/config
+     - chown vagrant:vagrant /home/vagrant/.kube/config
+
+  - name: Install weave pod network
+    become: false
+    command: kubectl apply -f https://docs.projectcalico.org/manifests/calico.yaml
+#    command: kubectl apply -f https://docs.projectcalico.org/v3.14/manifests/calico.yaml
+#    command: kubectl create -f https://docs.projectcalico.org/v3.4/getting-started/kubernetes/installation/hosted/calico.yaml
+
+  - name: Generate join command
+    command: kubeadm token create --print-join-command
+    register: join_command
+
+#  - name: Ansible create file if it doesn't exist example
+#    file:
+#      path: "/tmp/join_command"
+#      state: touch
+
+#  - delegate_to: localhost
+#    become: yes
+#    become_user: vagrant
+#    copy:
+#      content: "{{ join_command.stdout_lines[0] }}"
+#      dest: /tmp/join_command
+
+#  - name: Copy join command to local file
+#    become_user: vagrant
+#    local_action: copy content="{{ join_command.stdout_lines[0] }}" dest="/tmp/join_command"
+
+  handlers:
+    - name: docker status
+      service: name=docker state=started
+
+
+### --- KUBERNETES - WORKDER NODE
+
+  - name: Install packages that allow apt to be used over HTTPS
+    apt:
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - apt-transport-https
+      - ca-certificates
+      - curl
+      - gnupg-agent
+      - software-properties-common
+
+  - name: Add an apt signing key for Docker
+    apt_key:
+      url: https://download.docker.com/linux/ubuntu/gpg
+      state: present
+
+  - name: Add apt repository for stable version
+    apt_repository:
+      repo: deb [arch=amd64] https://download.docker.com/linux/ubuntu xenial stable
+      state: present
+
+  - name: Install docker and its dependecies
+    apt: 
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+      - docker-ce 
+      - docker-ce-cli 
+      - containerd.io
+    notify:
+      - docker status
+
+  - name: Add vagrant user to docker group
+    user:
+      name: vagrant
+      group: docker
+
+  - name: Remove swapfile from /etc/fstab
+    mount:
+      name: "{{ item }}"
+      fstype: swap
+      state: absent
+    with_items:
+      - swap
+      - none
+
+  - name: Disable swap
+    command: swapoff -a
+    when: ansible_swaptotal_mb > 0
+
+  - name: Add an apt signing key for Kubernetes
+    apt_key:
+      url: https://packages.cloud.google.com/apt/doc/apt-key.gpg
+      state: present
+
+  - name: Adding apt repository for Kubernetes
+    apt_repository:
+      repo: deb https://apt.kubernetes.io/ kubernetes-xenial main
+      state: present
+      filename: kubernetes.list
+
+  - name: Install Kubernetes binaries
+    apt: 
+      name: "{{ packages }}"
+      state: present
+      update_cache: yes
+    vars:
+      packages:
+        - kubelet 
+        - kubeadm 
+        - kubectl
+
+#  - name: Configure node ip
+#    lineinfile:
+#      path: /etc/default/kubelet
+#      line: KUBELET_EXTRA_ARGS=--node-ip={{ node_ip }}
+
+  - name: Restart kubelet
+    service:
+      name: kubelet
+      daemon_reload: yes
+      state: restarted
+
+#  - name: Copy the join command to server location
+#    copy: src=/tmp/join_command dest=/tmp/join-command.sh mode=0777
+
+#  - name: Join the node to cluster
+#    command: sh /tmp/join-command.sh
+
+  handlers:
+    - name: docker status
+      service: name=docker state=started
+
+
+### --- 
+
+
+
+### --- 
+
+
+
+
+### ---
+
+
+
